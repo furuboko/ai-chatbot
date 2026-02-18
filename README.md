@@ -10,9 +10,12 @@
 - [セットアップ](#セットアップ)
 - [開発](#開発)
 - [デプロイ](#デプロイ)
+  - [自動デプロイ (GitHub Actions)](#自動デプロイ-github-actions)
+  - [手動デプロイ](#手動デプロイ)
 - [Makefileコマンド](#makefileコマンド)
 - [環境変数](#環境変数)
 - [トラブルシューティング](#トラブルシューティング)
+- [運用マニュアル](#運用マニュアル)
 
 ## ✨ 特徴
 
@@ -208,7 +211,54 @@ make test-local
 
 ## ☁️ デプロイ
 
-### Google Cloud Run へのデプロイ
+### 自動デプロイ (GitHub Actions)
+
+**推奨:** GitHub Actionsによる自動デプロイが設定されています。
+
+#### 自動デプロイの仕組み
+
+`main`ブランチにプッシュすると、自動的に以下が実行されます：
+1. Dockerイメージのビルド
+2. Google Container Registryへのpush
+3. Cloud Runへのデプロイ
+
+#### 使い方
+
+```bash
+# 通常の開発フロー
+git add .
+git commit -m "feat: 新機能を追加"
+git push origin main
+
+# GitHub Actionsが自動実行（約2-3分）
+# デプロイ完了後、本番環境に反映されます
+```
+
+#### デプロイ状況の確認
+
+```bash
+# GitHub CLIで確認
+gh run list --repo furuboko/ai-chatbot
+gh run watch --repo furuboko/ai-chatbot
+
+# またはブラウザで確認
+https://github.com/furuboko/ai-chatbot/actions
+```
+
+#### 手動トリガー
+
+```bash
+# GitHub CLIで手動実行
+gh workflow run deploy.yml --repo furuboko/ai-chatbot
+```
+
+詳細は [OPERATIONS.md](./OPERATIONS.md#デプロイメント) を参照してください。
+
+---
+
+### 手動デプロイ
+
+緊急時やローカルテスト時に使用します。
 
 #### 1. GCPプロジェクトの設定
 
@@ -425,6 +475,26 @@ gcloud projects get-iam-policy PROJECT_ID
    gcloud run logs read ai-chatbot --region asia-northeast1
    ```
 
+## 📖 運用マニュアル
+
+本番環境の運用に関する詳細情報は、以下のドキュメントを参照してください：
+
+- **[OPERATIONS.md](./OPERATIONS.md)** - システム構成・運用マニュアル
+  - システム構成図とアーキテクチャ
+  - インフラ構成とIAM設定
+  - デプロイメント手順
+  - 監視とログ管理
+  - トラブルシューティングガイド
+  - コスト管理
+  - セキュリティ対策
+  - バックアップとリカバリ
+
+- **[CLAUDE.md](./CLAUDE.md)** - プロジェクト仕様書
+  - システム要件
+  - API設計
+  - データベーススキーマ
+  - 開発ガイドライン
+
 ## 📚 参考資料
 
 - [Next.js Documentation](https://nextjs.org/docs)
@@ -448,5 +518,13 @@ MIT
 
 ---
 
+## 🔗 リンク
+
+- **本番環境**: https://ai-chatbot-3n4ot7ouma-an.a.run.app
+- **GitHubリポジトリ**: https://github.com/furuboko/ai-chatbot
+- **Cloud Runコンソール**: https://console.cloud.google.com/run?project=crypto-reality-367506
+
+---
+
 **開発者**: Claude Code
-**最終更新**: 2026-02-17
+**最終更新**: 2026-02-18
