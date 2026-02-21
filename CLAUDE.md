@@ -93,11 +93,19 @@ An entertainment-focused AI chatbot web application powered by Anthropic Claude.
 │   │   │   ├── ChatInterface.tsx    # Main chat component
 │   │   │   ├── MessageList.tsx      # Message display
 │   │   │   ├── MessageInput.tsx     # Input field
+│   │   │   ├── MessageContentRenderer.tsx  # Render text/images
+│   │   │   ├── ImageUpload.tsx      # Image upload with drag & drop
+│   │   │   ├── ImagePreview.tsx     # Image thumbnail preview
+│   │   │   ├── ImageModal.tsx       # Full-screen image viewer
 │   │   │   └── ResetButton.tsx      # Conversation reset
 │   │   └── ui/                      # shadcn/ui components
 │   ├── lib/
 │   │   ├── prisma.ts                # Prisma client singleton
 │   │   ├── claude.ts                # Claude API client
+│   │   ├── gemini.ts                # Gemini API client
+│   │   ├── message-parser.ts        # Content parsing utilities
+│   │   ├── image-validation.ts      # Image validation logic
+│   │   ├── security.ts              # Security utilities
 │   │   └── utils.ts                 # Utility functions
 │   └── types/
 │       └── index.ts                 # TypeScript types
@@ -120,31 +128,43 @@ An entertainment-focused AI chatbot web application powered by Anthropic Claude.
 
 ### 1. Chat Interface
 - Single conversation thread
-- Text-only communication (no image upload)
+- **Multimodal communication** (text + images)
 - Clean, minimal UI design
 - Real-time message display
+- Image upload via drag & drop or file picker
 
 ### 2. Message Handling
-- User sends message → stored in MongoDB
-- Claude processes message → response stored in MongoDB
+- User sends message (text and/or images) → stored in MongoDB
+- Claude processes multimodal message → response stored in MongoDB
 - No streaming (complete response displayed at once)
 - Message history loaded on page load
+- Images compressed client-side (max 1024px, 85% quality)
 
-### 3. Conversation Persistence
-- All messages stored in MongoDB
+### 3. Image Support
+- **Upload**: Drag & drop or file picker
+- **Formats**: JPEG, PNG, GIF, WebP
+- **Limit**: Up to 5 images per message, 5MB each
+- **Display**: Thumbnails in chat, click to view full-screen
+- **Security**: File type validation, magic number verification
+- **Compression**: Automatic client-side resizing and quality reduction
+
+### 4. Conversation Persistence
+- All messages (including images) stored in MongoDB
 - Conversation persists across browser sessions
 - No user accounts (single global conversation)
+- Images stored as base64 in database
 
-### 4. Reset Functionality
+### 5. Reset Functionality
 - Button to clear conversation history
-- Deletes all messages from database
+- Deletes all messages and images from database
 - Starts fresh conversation
 
-### 5. Error Handling
-- API error messages displayed to user
+### 6. Error Handling
+- API error messages displayed to user (Japanese)
 - Network error recovery
 - Database connection error handling
 - Claude API rate limit handling
+- Image validation errors (size, type, count)
 
 ---
 
@@ -186,14 +206,49 @@ model Message {
 ### Hono API Routes (via `/api/[[...route]]/route.ts`)
 
 #### 1. POST `/api/chat`
-Send a user message and get Claude's response.
+Send a user message (with optional images) and get Claude's response.
 
-**Request:**
+**Request (Text only):**
 ```json
 {
   "message": "Hello, how are you?"
 }
 ```
+
+**Request (With images):**
+```json
+{
+  "message": "What's in this image?",
+  "images": [
+    {
+      "data": "base64-encoded-image-data",
+      "mimeType": "image/jpeg",
+      "fileName": "photo.jpg",
+      "size": 1024000
+    }
+  ]
+}
+```
+
+**Request (Images only):**
+```json
+{
+  "images": [
+    {
+      "data": "base64-encoded-image-data",
+      "mimeType": "image/png",
+      "fileName": "screenshot.png",
+      "size": 2048000
+    }
+  ]
+}
+```
+
+**Validation:**
+- Either `message` or `images` must be provided
+- Max 5 images per request
+- Max 5MB per image (after compression)
+- Allowed formats: JPEG, PNG, GIF, WebP
 
 **Response:**
 ```json
@@ -202,25 +257,28 @@ Send a user message and get Claude's response.
   "userMessage": {
     "id": "...",
     "role": "user",
-    "content": "Hello, how are you?",
+    "content": "[{\"type\":\"text\",\"text\":\"...\"},{\"type\":\"image\",\"source\":{...}}]",
     "createdAt": "2024-01-01T00:00:00.000Z"
   },
   "assistantMessage": {
     "id": "...",
     "role": "assistant",
-    "content": "I'm doing well, thank you!",
+    "content": "I can see a beautiful sunset in the image!",
     "createdAt": "2024-01-01T00:00:01.000Z"
   }
 }
 ```
 
 **Process:**
-1. Validate request body
-2. Save user message to MongoDB
-3. Fetch conversation history
-4. Call Claude API with history
-5. Save assistant response to MongoDB
-6. Return both messages
+1. Validate request body (message and/or images)
+2. Validate images (type, size, magic numbers)
+3. Build content blocks (text + images)
+4. Serialize and save user message to MongoDB
+5. Fetch conversation history
+6. Parse history messages (backward compatible)
+7. Call Claude API with multimodal content
+8. Save assistant response to MongoDB
+9. Return both messages
 
 #### 2. GET `/api/messages`
 Retrieve all messages in conversation history.
@@ -594,13 +652,50 @@ docker run -p 8080:8080 --env-file .env.local ai-chatbot
 
 ---
 
+## 🖼️ Multimodal Implementation
+
+### Image Upload Flow
+1. User selects images (drag & drop or file picker)
+2. Client-side compression (Canvas API, max 1024px, 85% quality)
+3. Convert to base64
+4. Client-side validation (type, size, count)
+5. Send to `/api/chat` with JSON body
+6. Server-side validation (magic numbers, malicious content)
+7. Build content blocks array
+8. Serialize to JSON string
+9. Store in MongoDB `content` field
+10. Send to Claude API with multimodal format
+11. Display in chat with thumbnail preview
+
+### Content Storage Format
+```typescript
+// Backward compatible: Plain text
+content: "Hello, how are you?"
+
+// New: JSON string with content blocks
+content: '[{"type":"text","text":"What\'s in this image?"},{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"..."}}]'
+```
+
+### Security Measures
+- **Client-side**: File type, size, count validation
+- **Server-side**: Magic number verification, malicious payload detection
+- **Filename sanitization**: Path traversal prevention
+- **Rate limiting**: Maintained for multimodal requests
+
+### Performance Optimizations
+- **Client-side compression**: Reduces upload time and storage
+- **Lazy loading**: Images load as needed (future enhancement)
+- **Thumbnail display**: Smaller images in chat history
+
+---
+
 ## 🐛 Known Limitations
 
 1. **Single Conversation**: All users share the same conversation thread (no user isolation)
 2. **No Authentication**: Anyone can access and reset the conversation
 3. **No Streaming**: Responses appear all at once (may feel slow for long responses)
-4. **No Context Limit**: Conversation history grows indefinitely (consider implementing cleanup)
-5. **No Rate Limiting**: Currently no protection against abuse (should be added)
+4. **Database Size Growth**: Images stored as base64 can increase database size significantly
+5. **No Context Limit**: Conversation history grows indefinitely (consider implementing cleanup)
 
 ### Future Enhancements (Optional)
 - Add user authentication and per-user conversations
@@ -631,6 +726,6 @@ docker run -p 8080:8080 --env-file .env.local ai-chatbot
 
 ---
 
-**Last Updated**: 2026-02-15
-**Version**: 1.0.0
-**Status**: Specification Complete
+**Last Updated**: 2026-02-21
+**Version**: 2.0.0
+**Status**: Multimodal Support Complete
