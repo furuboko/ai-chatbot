@@ -2,9 +2,11 @@ import { useState, useRef, KeyboardEvent, CompositionEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { ImageUpload } from './ImageUpload'
+import type { ImageAttachment } from '@/types'
 
 interface MessageInputProps {
-  onSendMessage: (message: string) => Promise<void>
+  onSendMessage: (message?: string, images?: ImageAttachment[]) => Promise<void>
   isLoading: boolean
 }
 
@@ -12,14 +14,16 @@ const MAX_MESSAGE_LENGTH = 10000
 
 export function MessageInput({ onSendMessage, isLoading }: MessageInputProps) {
   const [message, setMessage] = useState('')
+  const [images, setImages] = useState<ImageAttachment[]>([])
   const [error, setError] = useState<string | null>(null)
   const isComposingRef = useRef(false)
 
   const handleSubmit = async () => {
     const trimmed = message.trim()
 
-    if (!trimmed) {
-      setError('メッセージを入力してください')
+    // Validate: must have either message or images
+    if (!trimmed && images.length === 0) {
+      setError('メッセージまたは画像を追加してください')
       return
     }
 
@@ -31,8 +35,12 @@ export function MessageInput({ onSendMessage, isLoading }: MessageInputProps) {
     setError(null)
 
     try {
-      await onSendMessage(trimmed)
+      await onSendMessage(
+        trimmed || undefined,
+        images.length > 0 ? images : undefined
+      )
       setMessage('')
+      setImages([])
     } catch (err) {
       setError(err instanceof Error ? err.message : '送信に失敗しました')
     }
@@ -61,6 +69,15 @@ export function MessageInput({ onSendMessage, isLoading }: MessageInputProps) {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
+
+      {/* Image upload section */}
+      <ImageUpload
+        images={images}
+        onImagesChange={setImages}
+        disabled={isLoading}
+      />
+
+      {/* Text input section */}
       <div className="flex gap-2">
         <Input
           placeholder="メッセージを入力... (Enterで送信)"
@@ -73,12 +90,16 @@ export function MessageInput({ onSendMessage, isLoading }: MessageInputProps) {
           className="flex-1"
           maxLength={MAX_MESSAGE_LENGTH}
         />
-        <Button onClick={handleSubmit} disabled={isLoading || !message.trim()}>
+        <Button
+          onClick={handleSubmit}
+          disabled={isLoading || (!message.trim() && images.length === 0)}
+        >
           {isLoading ? '送信中...' : '送信'}
         </Button>
       </div>
       <div className="text-xs text-muted-foreground">
         {message.length} / {MAX_MESSAGE_LENGTH} 文字
+        {images.length > 0 && ` • ${images.length}枚の画像`}
       </div>
     </div>
   )
