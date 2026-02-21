@@ -7,19 +7,28 @@ const envSchema = z.object({
   // Database
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 
-  // Anthropic API
-  ANTHROPIC_API_KEY: z.string().min(1, 'ANTHROPIC_API_KEY is required'),
+  // AI API Keys (at least one required)
+  ANTHROPIC_API_KEY: z.string().optional(),
+  GEMINI_API_KEY: z.string().optional(),
 
-  // Optional settings
-  CLAUDE_MODEL: z.string().optional().default('claude-3-5-sonnet-20241022'),
-  CLAUDE_MAX_TOKENS: z.string().optional().default('4096'),
-  CLAUDE_TEMPERATURE: z.string().optional().default('1.0'),
+  // AI Provider selection
+  AI_PROVIDER: z.enum(['claude', 'gemini']).default('gemini'),
+
+  // Claude settings
+  CLAUDE_MODEL: z.string().default('claude-3-5-sonnet-20241022'),
+  CLAUDE_MAX_TOKENS: z.string().default('4096'),
+  CLAUDE_TEMPERATURE: z.string().default('1.0'),
+
+  // Gemini settings
+  GEMINI_MODEL: z.string().default('gemini-1.5-flash-latest'),
+  GEMINI_MAX_TOKENS: z.string().default('4096'),
+  GEMINI_TEMPERATURE: z.string().default('1.0'),
 
   // Performance settings
-  CONVERSATION_HISTORY_LIMIT: z.string().optional().default('50'),
+  CONVERSATION_HISTORY_LIMIT: z.string().default('50'),
 
   // Node environment
-  NODE_ENV: z.enum(['development', 'production', 'test']).optional().default('development'),
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 })
 
 /**
@@ -37,6 +46,11 @@ export function validateEnv() {
 
   return result.data
 }
+
+/**
+ * Inferred environment variables type
+ */
+export type Env = z.infer<typeof envSchema>
 
 /**
  * Validated environment variables
