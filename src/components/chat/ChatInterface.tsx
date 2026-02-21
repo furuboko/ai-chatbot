@@ -6,7 +6,7 @@ import { MessageInput } from './MessageInput'
 import { ResetButton } from './ResetButton'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import type { Message, ChatResponse, MessagesResponse, ResetResponse } from '@/types'
+import type { Message, ChatResponse, MessagesResponse, ResetResponse, ImageAttachment } from '@/types'
 
 export function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([])
@@ -34,7 +34,7 @@ export function ChatInterface() {
     }
   }
 
-  const handleSendMessage = async (content: string) => {
+  const handleSendMessage = async (content?: string, images?: ImageAttachment[]) => {
     setIsLoading(true)
     setError(null)
 
@@ -44,7 +44,10 @@ export function ChatInterface() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ message: content }),
+        body: JSON.stringify({
+          message: content,
+          images: images,
+        }),
       })
 
       const data: ChatResponse = await response.json()
