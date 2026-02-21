@@ -97,3 +97,45 @@ export const securityHeaders = {
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
 }
+
+/**
+ * Sanitize file name to prevent path traversal and other attacks
+ * @param fileName - File name to sanitize
+ * @returns Sanitized file name
+ */
+export function sanitizeFileName(fileName: string): string {
+  // Remove path traversal attempts
+  let sanitized = fileName.replace(/\.\./g, '')
+
+  // Remove directory separators
+  sanitized = sanitized.replace(/[\/\\]/g, '')
+
+  // Remove special characters that could be dangerous
+  sanitized = sanitized.replace(/[<>:"|?*]/g, '')
+
+  // Remove null bytes
+  sanitized = sanitized.replace(/\0/g, '')
+
+  // Trim whitespace
+  sanitized = sanitized.trim()
+
+  // Limit length (max 255 characters, preserve extension)
+  if (sanitized.length > 255) {
+    const parts = sanitized.split('.')
+    const ext = parts.length > 1 ? parts.pop() : ''
+    const name = parts.join('.')
+
+    if (ext) {
+      sanitized = name.slice(0, 250) + '.' + ext
+    } else {
+      sanitized = sanitized.slice(0, 255)
+    }
+  }
+
+  // If empty after sanitization, use default name
+  if (!sanitized) {
+    sanitized = 'image'
+  }
+
+  return sanitized
+}

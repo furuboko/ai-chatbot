@@ -15,6 +15,7 @@ const CLAUDE_TEMPERATURE = parseFloat(env.CLAUDE_TEMPERATURE || '1.0')
 
 /**
  * Send messages to Claude API and get a response
+ * Supports both text-only and multimodal (text + images) messages
  * @param messages - Array of messages (conversation history)
  * @returns Assistant's response text
  */
@@ -24,16 +25,20 @@ export async function sendMessageToClaude(
   const startTime = Date.now()
 
   try {
+    // Count messages with images (for logging)
+    const imageCount = messages.filter((msg) => Array.isArray(msg.content)).length
+
     logger.info('Calling Claude API', {
       model: CLAUDE_MODEL,
       messageCount: messages.length,
+      multimodalMessages: imageCount,
     })
 
     const response = await anthropic.messages.create({
       model: CLAUDE_MODEL,
       max_tokens: CLAUDE_MAX_TOKENS,
       temperature: CLAUDE_TEMPERATURE,
-      messages: messages,
+      messages: messages as any, // Anthropic SDK supports both string and ContentBlock[]
     })
 
     // Extract text content from response

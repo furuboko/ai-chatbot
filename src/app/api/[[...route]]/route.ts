@@ -5,8 +5,11 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { sendMessageToClaude } from '@/lib/claude'
+import { sendMessageToGemini } from '@/lib/gemini'
 import { checkRateLimit, getClientIdentifier } from '@/lib/rate-limit'
-import { sanitizeInput, validateMessage, securityHeaders } from '@/lib/security'
+import { sanitizeInput, validateMessage, securityHeaders, sanitizeFileName } from '@/lib/security'
+import { validateImageBatch } from '@/lib/image-validation'
+import { toClaudeContentBlocks, serializeMessageContent, parseMessageContent } from '@/lib/message-parser'
 import { env } from '@/lib/env'
 import { logger } from '@/lib/logger'
 import type { ChatResponse, MessagesResponse, ResetResponse, ErrorResponse } from '@/types'
@@ -35,9 +38,20 @@ app.use('/*', async (c, next) => {
 })
 
 // Validation schemas
-const chatSchema = z.object({
-  message: z.string().min(1).max(10000),
+const imageSchema = z.object({
+  data: z.string().min(1),
+  mimeType: z.enum(['image/jpeg', 'image/png', 'image/gif', 'image/webp']),
+  fileName: z.string(),
+  size: z.number().max(5 * 1024 * 1024),
 })
+
+const chatSchema = z.object({
+  message: z.string().min(1).max(10000).optional(),
+  images: z.array(imageSchema).max(5).optional(),
+}).refine(
+  (data) => data.message || (data.images && data.images.length > 0),
+  { message: 'Either message or images must be provided' }
+)
 
 // Error handler
 const handleError = (error: unknown, context?: Record<string, unknown>): ErrorResponse => {
@@ -96,28 +110,53 @@ app.post('/chat', zValidator('json', chatSchema), async (c) => {
       )
     }
 
-    const { message } = c.req.valid('json')
+    const { message, images } = c.req.valid('json')
 
-    // Validate message content
-    const validation = validateMessage(message)
-    if (!validation.valid) {
-      return c.json(
-        {
-          success: false,
-          error: validation.error,
-        } as ErrorResponse,
-        400
-      )
+    // Validate message content if provided
+    if (message) {
+      const validation = validateMessage(message)
+      if (!validation.valid) {
+        return c.json(
+          {
+            success: false,
+            error: validation.error,
+          } as ErrorResponse,
+          400
+        )
+      }
     }
 
-    // Sanitize input
-    const sanitizedMessage = sanitizeInput(message)
+    // Validate images if provided
+    if (images && images.length > 0) {
+      // Sanitize file names
+      images.forEach((img) => {
+        img.fileName = sanitizeFileName(img.fileName)
+      })
+
+      const validation = validateImageBatch(images)
+      if (!validation.valid) {
+        return c.json(
+          {
+            success: false,
+            error: validation.error,
+          } as ErrorResponse,
+          400
+        )
+      }
+    }
+
+    // Sanitize input message if provided
+    const sanitizedMessage = message ? sanitizeInput(message) : undefined
+
+    // Build content blocks
+    const contentBlocks = toClaudeContentBlocks(sanitizedMessage, images)
+    const serializedContent = serializeMessageContent(contentBlocks)
 
     // 1. Save user message to database
     const userMessage = await prisma.message.create({
       data: {
         role: 'user',
-        content: sanitizedMessage,
+        content: serializedContent,
       },
     })
 
@@ -128,14 +167,17 @@ app.post('/chat', zValidator('json', chatSchema), async (c) => {
       take: historyLimit,
     })
 
-    // 3. Prepare messages for Claude API
+    // 3. Prepare messages for Claude API (parse content blocks)
     const claudeMessages = history.map((msg) => ({
       role: msg.role as 'user' | 'assistant',
-      content: msg.content,
+      content: parseMessageContent(msg.content),
     }))
 
-    // 4. Call Claude API
-    const assistantContent = await sendMessageToClaude(claudeMessages)
+    // 4. Call AI API (Claude or Gemini based on AI_PROVIDER)
+    const aiProvider = env.AI_PROVIDER || 'gemini'
+    const assistantContent = aiProvider === 'claude'
+      ? await sendMessageToClaude(claudeMessages)
+      : await sendMessageToGemini(claudeMessages)
 
     // 5. Save assistant response to database
     const assistantMessage = await prisma.message.create({
@@ -166,7 +208,8 @@ app.post('/chat', zValidator('json', chatSchema), async (c) => {
     logger.info('Chat request completed', {
       clientId,
       duration,
-      messageLength: sanitizedMessage.length,
+      messageLength: sanitizedMessage?.length || 0,
+      imageCount: images?.length || 0,
       responseLength: assistantContent.length,
     })
 

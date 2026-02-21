@@ -6,9 +6,38 @@ export interface Message {
   createdAt: Date
 }
 
+// Image attachment types
+export interface ImageAttachment {
+  data: string // base64 encoded image data
+  mimeType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
+  fileName: string
+  size: number // bytes
+}
+
+// Content block types for multimodal messages
+export interface TextContentBlock {
+  type: 'text'
+  text: string
+}
+
+export interface ImageContentBlock {
+  type: 'image'
+  source: {
+    type: 'base64'
+    media_type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
+    data: string // base64 encoded
+  }
+}
+
+export type ContentBlock = TextContentBlock | ImageContentBlock
+
+// Message content can be plain text (backward compatible) or content blocks
+export type MessageContent = string | ContentBlock[]
+
 // API Request types
 export interface ChatRequest {
-  message: string
+  message?: string // Now optional
+  images?: ImageAttachment[] // New: optional images array
 }
 
 // API Response types
@@ -36,5 +65,11 @@ export interface ErrorResponse {
 // Claude API types
 export interface ClaudeMessage {
   role: 'user' | 'assistant'
-  content: string
+  content: string | ContentBlock[] // Support both formats
+}
+
+// Validation result type
+export interface ValidationResult {
+  valid: boolean
+  error?: string
 }
