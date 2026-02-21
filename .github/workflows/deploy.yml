@@ -5,12 +5,25 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'デプロイ先環境'
+        required: true
+        type: choice
+        options:
+          - production
+          - staging
+        default: 'staging'
+      skip_build:
+        description: 'ビルドをスキップ（既存イメージを使用）'
+        required: false
+        type: boolean
+        default: false
 
 env:
   PROJECT_ID: crypto-reality-367506
-  SERVICE_NAME: ai-chatbot
   REGION: asia-northeast1
-  IMAGE_NAME: gcr.io/crypto-reality-367506/ai-chatbot
+  BASE_IMAGE_NAME: gcr.io/crypto-reality-367506/ai-chatbot
 
 jobs:
   deploy:
@@ -22,6 +35,27 @@ jobs:
       id-token: write
 
     steps:
+      - name: Set environment variables
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+          else
+            ENVIRONMENT="production"
+          fi
+
+          echo "ENVIRONMENT=${ENVIRONMENT}" >> $GITHUB_ENV
+
+          if [ "${ENVIRONMENT}" = "production" ]; then
+            echo "SERVICE_NAME=ai-chatbot" >> $GITHUB_ENV
+            echo "IMAGE_NAME=${{ env.BASE_IMAGE_NAME }}" >> $GITHUB_ENV
+          else
+            echo "SERVICE_NAME=ai-chatbot-staging" >> $GITHUB_ENV
+            echo "IMAGE_NAME=${{ env.BASE_IMAGE_NAME }}-staging" >> $GITHUB_ENV
+          fi
+
+          echo "Deploying to: ${ENVIRONMENT}"
+          echo "Service name: ${SERVICE_NAME}"
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -39,16 +73,35 @@ jobs:
         run: gcloud auth configure-docker
 
       - name: Build and Push Docker image
+        if: github.event.inputs.skip_build != 'true'
         run: |
           docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
           docker tag ${{ env.IMAGE_NAME }}:${{ github.sha }} ${{ env.IMAGE_NAME }}:latest
           docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ env.IMAGE_NAME }}:latest
 
+      - name: Use existing image
+        if: github.event.inputs.skip_build == 'true'
+        run: |
+          echo "Skipping build, using existing latest image"
+          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
+
+      - name: Set image tag
+        run: |
+          if [ "${{ github.event.inputs.skip_build }}" = "true" ]; then
+            echo "IMAGE_TAG=latest" >> $GITHUB_ENV
+          else
+            echo "IMAGE_TAG=${{ github.sha }}" >> $GITHUB_ENV
+          fi
+
       - name: Deploy to Cloud Run
         run: |
+          echo "Deploying to ${{ env.ENVIRONMENT }} environment..."
+          echo "Service: ${{ env.SERVICE_NAME }}"
+          echo "Image: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+
           gcloud run deploy ${{ env.SERVICE_NAME }} \
-            --image ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --image ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
             --platform managed \
             --region ${{ env.REGION }} \
             --allow-unauthenticated \
@@ -64,5 +117,10 @@ jobs:
           SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
             --region ${{ env.REGION }} \
             --format 'value(status.url)')
-          echo "Deployment successful!"
-          echo "Service URL: $SERVICE_URL"
+          echo "================================"
+          echo "✅ Deployment successful!"
+          echo "Environment: ${{ env.ENVIRONMENT }}"
+          echo "Service: ${{ env.SERVICE_NAME }}"
+          echo "Image: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+          echo "URL: $SERVICE_URL"
+          echo "================================"
