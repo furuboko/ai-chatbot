@@ -5,48 +5,18 @@ on:
     types: [created]
 
 jobs:
-  check-comment:
-    name: Check for Claude mention
+  respond:
+    name: Respond to Claude mention
     runs-on: ubuntu-latest
     if: |
       github.event.issue.pull_request == null &&
       contains(github.event.comment.body, '@claude')
 
-    outputs:
-      should_implement: ${{ steps.check.outputs.should_implement }}
-      command: ${{ steps.check.outputs.command }}
-
-    steps:
-      - name: Check comment content
-        id: check
-        run: |
-          COMMENT="${{ github.event.comment.body }}"
-
-          if echo "$COMMENT" | grep -qi "@claude.*実装"; then
-            echo "should_implement=true" >> $GITHUB_OUTPUT
-            echo "command=implement" >> $GITHUB_OUTPUT
-          elif echo "$COMMENT" | grep -qi "@claude.*implement"; then
-            echo "should_implement=true" >> $GITHUB_OUTPUT
-            echo "command=implement" >> $GITHUB_OUTPUT
-          else
-            echo "should_implement=false" >> $GITHUB_OUTPUT
-          fi
-
-  implement:
-    name: Auto-implement with Claude
-    runs-on: ubuntu-latest
-    needs: check-comment
-    if: needs.check-comment.outputs.should_implement == 'true'
-
     permissions:
-      contents: write
+      contents: read
       issues: write
-      pull-requests: write
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: React to comment
         uses: actions/github-script@v7
         with:
@@ -58,253 +28,25 @@ jobs:
               content: 'eyes'
             });
 
-      - name: Get issue details
-        id: issue
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const issue = await github.rest.issues.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number
-            });
-
-            core.setOutput('title', issue.data.title);
-            core.setOutput('body', issue.data.body);
-            core.setOutput('number', issue.data.number);
-
-      - name: Add in-progress label
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              labels: ['🤖 claude-implementing']
-            });
-
       - name: Comment on issue
         uses: actions/github-script@v7
         with:
           script: |
+            const body = `👋 こんにちは！@claude とメンションいただきありがとうございます。
+
+現在、このワークフローは基本的な応答のみを行います。
+
+**自動実装は現在開発中です。**
+
+手動で実装を進める場合は、このCLIセッションで直接指示してください。
+
+---
+Issue: #${context.issue.number}
+Comment: ${context.payload.comment.html_url}`;
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: '🤖 Claude AI による実装を開始しました...\n\n実装が完了したらPRを作成します。'
-            });
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Call Claude API to generate implementation
-        id: claude
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ISSUE_TITLE: ${{ steps.issue.outputs.title }}
-          ISSUE_BODY: ${{ steps.issue.outputs.body }}
-          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
-        run: |
-          # Create a Node.js script to call Claude API
-          cat > claude-implement.js << 'SCRIPT'
-          const Anthropic = require('@anthropic-ai/sdk');
-          const fs = require('fs');
-
-          const client = new Anthropic({
-            apiKey: process.env.ANTHROPIC_API_KEY,
-          });
-
-          async function generateImplementation() {
-            const issueTitle = process.env.ISSUE_TITLE;
-            const issueBody = process.env.ISSUE_BODY;
-
-            const prompt = `あなたはソフトウェアエンジニアです。以下のGitHub Issueの実装計画を作成してください。
-
-Issue Title: ${issueTitle}
-
-Issue Body:
-${issueBody}
-
-以下の形式でJSONを返してください：
-{
-  "files": [
-            {
-              "path": "ファイルパス",
-              "content": "ファイルの内容",
-              "action": "create" または "update"
-            }
-          ],
-          "summary": "実装の概要",
-          "steps": ["実装手順1", "実装手順2", ...]
-        }`;
-
-            const message = await client.messages.create({
-              model: 'claude-sonnet-4-5-20250929',
-              max_tokens: 8000,
-              messages: [{
-                role: 'user',
-                content: prompt
-              }]
-            });
-
-            const responseText = message.content[0].text;
-            console.log('Claude Response:', responseText);
-
-            // Extract JSON from response
-            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-              const plan = JSON.parse(jsonMatch[0]);
-              fs.writeFileSync('implementation-plan.json', JSON.stringify(plan, null, 2));
-              return plan;
-            } else {
-              throw new Error('Failed to parse Claude response');
-            }
-          }
-
-          generateImplementation().catch(console.error);
-          SCRIPT
-
-          # Install dependencies
-          npm install @anthropic-ai/sdk
-
-          # Run the script
-          node claude-implement.js || echo "implementation_failed=true" >> $GITHUB_OUTPUT
-
-      - name: Create implementation branch
-        run: |
-          BRANCH_NAME="claude/issue-${{ steps.issue.outputs.number }}"
-          git config user.name "Claude AI Bot"
-          git config user.email "claude-bot@anthropic.com"
-          git checkout -b "$BRANCH_NAME"
-          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
-
-      - name: Apply implementation
-        run: |
-          if [ -f implementation-plan.json ]; then
-            echo "Implementation plan found, but automatic file creation is limited."
-            echo "Creating placeholder file..."
-
-            # Read the plan summary
-            SUMMARY=$(cat implementation-plan.json | jq -r '.summary // "Implementation generated"')
-
-            # Create a marker file
-            mkdir -p .claude
-            echo "Issue #${{ steps.issue.outputs.number }}: $SUMMARY" > .claude/implementation.md
-            cat implementation-plan.json >> .claude/implementation.md
-
-            git add .claude/implementation.md
-            git commit -m "feat: Auto-implementation for issue #${{ steps.issue.outputs.number }}
-
-Generated by Claude AI
-
-$SUMMARY"
-          else
-            echo "No implementation plan generated"
-            exit 1
-          fi
-
-      - name: Push branch
-        run: |
-          git push origin "$BRANCH_NAME"
-
-      - name: Create Pull Request
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            let body = '🤖 この PR は Claude AI によって自動生成されました。\n\n';
-
-            if (fs.existsSync('implementation-plan.json')) {
-              const plan = JSON.parse(fs.readFileSync('implementation-plan.json', 'utf8'));
-              body += `## 概要\n${plan.summary || 'N/A'}\n\n`;
-
-              if (plan.steps && plan.steps.length > 0) {
-                body += '## 実装手順\n';
-                plan.steps.forEach((step, i) => {
-                  body += `${i + 1}. ${step}\n`;
-                });
-                body += '\n';
-              }
-
-              if (plan.files && plan.files.length > 0) {
-                body += '## 変更ファイル\n';
-                plan.files.forEach(file => {
-                  body += `- ${file.action === 'create' ? '📄 新規' : '✏️ 更新'}: \`${file.path}\`\n`;
-                });
-              }
-            }
-
-            body += `\n---\nCloses #${{ steps.issue.outputs.number }}`;
-
-            const pr = await github.rest.pulls.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `🤖 Auto-implementation: ${{ steps.issue.outputs.title }}`,
-              head: process.env.BRANCH_NAME,
-              base: 'main',
               body: body
-            });
-
-            core.setOutput('pr_number', pr.data.number);
-            core.setOutput('pr_url', pr.data.html_url);
-
-      - name: Comment with PR link
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: '✅ 実装が完了しました！\n\nPull Request: ${{ steps.create-pr.outputs.pr_url }}\n\nPRをレビューして、問題なければマージしてください。'
-            });
-
-      - name: Remove in-progress label
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            try {
-              await github.rest.issues.removeLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                name: '🤖 claude-implementing'
-              });
-            } catch (error) {
-              console.log('Label removal failed:', error.message);
-            }
-
-      - name: Add completed reaction
-        if: success()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.reactions.createForIssueComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: context.payload.comment.id,
-              content: 'rocket'
-            });
-
-      - name: Add failed reaction
-        if: failure()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.reactions.createForIssueComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: context.payload.comment.id,
-              content: 'confused'
-            });
-
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: '❌ 実装中にエラーが発生しました。手動で実装を進めてください。'
             });
